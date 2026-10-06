@@ -174,7 +174,6 @@ PERMISSIONS
       - "Allow public client flows" enabled
       - Delegated Microsoft Graph permissions (admin consent as required):
           DeviceManagementApps.ReadWrite.All
-          DeviceManagementConfiguration.ReadWrite.All
           DeviceManagementRBAC.Read.All
           Group.Read.All
     Use its Application (client) ID as ClientId. The signed-in user also needs

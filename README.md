@@ -156,7 +156,7 @@ Get-Help packageIntune -Examples
 Get-Help Set-PSADTIntuneConfig -Full
 ```
 
-## Permissions
+## Entra APP Permissions
 
 Sign-in is interactive (delegated) through IntuneWin32App's `Connect-MSIntuneGraph`. Create an Entra ID app registration with:
 
@@ -164,7 +164,6 @@ Sign-in is interactive (delegated) through IntuneWin32App's `Connect-MSIntuneGra
 - **Allow public client flows** enabled
 - Delegated Microsoft Graph permissions, with admin consent as your tenant requires:
   - `DeviceManagementApps.ReadWrite.All`
-  - `DeviceManagementConfiguration.ReadWrite.All`
   - `DeviceManagementRBAC.Read.All`
   - `Group.Read.All`
 
