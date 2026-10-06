@@ -1,0 +1,13 @@
+{
+  "TenantId": "",
+  "AADClientId": "",
+  "Params": {
+    "Owner": "",
+    "AADGroupId": "",
+    "ScopeTagNameArray": ["Default"],
+    "Architecture": "x64",
+    "MinimumWindowsRelease": "W11_22H2",
+    "InstallCommandLine": "Invoke-AppDeployToolkit.exe -DeploymentType Install -DeployMode Auto",
+    "UninstallCommandLine": "Invoke-AppDeployToolkit.exe -DeploymentType Uninstall -DeployMode Auto"
+  }
+}

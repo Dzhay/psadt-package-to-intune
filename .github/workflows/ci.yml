@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          Install-PSResource -Name IntuneWin32App, Microsoft.PowerShell.ConsoleGuiTools, PSScriptAnalyzer -Scope CurrentUser -TrustRepository -Quiet
+          Install-PSResource -Name Pester -Version '[5.5.0,6.0.0)' -Scope CurrentUser -TrustRepository -Quiet
+
+      # Includes PSScriptAnalyzer, manifest, help and IntuneWin32App compatibility checks (tests/Module.Tests.ps1)
+      - name: Run tests
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'TestResults/testResults.xml'
+          Invoke-Pester -Configuration $config
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches ModuleVersion
+        shell: pwsh
+        run: |
+          $version = (Import-PowerShellDataFile ./PSADTIntune/PSADTIntune.psd1).ModuleVersion
+          if ("v$version" -ne '${{ github.ref_name }}') {
+            throw "Tag ${{ github.ref_name }} does not match ModuleVersion $version"
+          }
+
+      - name: Publish to PowerShell Gallery
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          # Publishing validates the manifest, which needs the RequiredModules installed
+          Install-PSResource -Name IntuneWin32App, Microsoft.PowerShell.ConsoleGuiTools -Scope CurrentUser -TrustRepository -Quiet
+          Publish-PSResource -Path ./PSADTIntune -Repository PSGallery -ApiKey $env:PSGALLERY_API_KEY

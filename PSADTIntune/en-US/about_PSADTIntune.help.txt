@@ -1,0 +1,205 @@
+TOPIC
+    about_PSADTIntune
+
+SHORT DESCRIPTION
+    Packages PSAppDeployToolkit (PSADT) v4 applications and uploads them to
+    Microsoft Intune as Win32 apps.
+
+LONG DESCRIPTION
+    PSADTIntune turns a PSADT v4 package folder into an .intunewin file and
+    creates, updates or supersedes the matching Win32 app in Intune. App name,
+    version, vendor and install context are read from Invoke-AppDeployToolkit.ps1.
+
+    Commands:
+      Publish-PSADTIntuneApp    Package and upload; install/uninstall locally
+        (aliases: packageIntune, PSADTIntune)
+      Set-PSADTIntuneConfig     Create/update settings
+      Get-PSADTIntuneConfig     Show effective settings
+
+    Requirements: Windows, PowerShell 7.2+, the IntuneWin32App and
+    Microsoft.PowerShell.ConsoleGuiTools modules (installed automatically by
+    Install-Module), and an Entra ID app registration (see PERMISSIONS).
+
+QUICK START
+    1. Install the module:
+         Install-Module PSADTIntune -Scope CurrentUser
+
+    2. Configure your tenant and app registration (once per user):
+         Set-PSADTIntuneConfig -TenantId 'contoso.onmicrosoft.com' `
+                               -ClientId 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
+    3. Open a terminal in the package folder, install the app on this
+       machine (so its shortcut exists for the detection rules), then
+       package and upload it:
+         packageIntune -i
+         packageIntune
+
+    Quick reference at any time:
+         packageIntune -Help
+
+FOLDER LAYOUT
+    Run packageIntune in a folder that contains exactly one PSADT package
+    folder, or inside the PSADT package folder itself:
+
+      Contoso_Example_App\                    <- run here ...
+      +-- Contoso_Example_App_Package\        <- ... or here
+          +-- Invoke-AppDeployToolkit.ps1
+          +-- Invoke-AppDeployToolkit.exe
+          +-- Files\  Assets\  Config\  PSAppDeployToolkit\ ...
+
+    The .intunewin is written to the folder you run in and named after the
+    package folder. When you run inside the package folder itself, the
+    .intunewin and AppIcon.png are removed again after the upload.
+
+    The script must define AppName and AppVersion (and ideally AppVendor and
+    RequireAdmin) in its $adtSession block, e.g.:
+        AppVendor    = 'Contoso'
+        AppName      = 'Example App'
+        AppVersion   = '1.2.3'
+        RequireAdmin = $true
+
+MODES
+    New app (default)
+        packageIntune
+        Builds the package, lets you pick detection rules, shows all parameters
+        and asks for confirmation before creating the app. If AADGroupId is
+        configured, the app is assigned to it as Available.
+
+    Update an existing app
+        packageIntune -AppId <app-guid>
+        Replaces the package content of the app and sets its version to the
+        PSADT AppVersion. Detection rules, assignments and other settings are
+        NOT changed - if the app uses a version-based detection rule, update it
+        in Intune or use -Supersede instead.
+
+    Supersede an existing app
+        packageIntune -Supersede <app-guid>
+        Creates a new app (full new-app flow), then:
+          - copies the old app's display name and description,
+          - adds Update supersedence over the old app,
+          - adds every group assigned to the old app as an Exclude assignment
+            (All Users / All Devices assignments cannot be excluded and are
+            skipped with a warning),
+          - assigns AADGroupId as Available (Include) for testing.
+        Remove the exclusions in Intune when you are ready to roll out.
+
+    Install / uninstall on this computer
+        packageIntune -Install     (short: -i)
+        packageIntune -Uninstall   (short: -u)
+        Runs the configured InstallCommandLine / UninstallCommandLine in the
+        PSADT package folder, like Intune does. Defaults:
+          Invoke-AppDeployToolkit.exe -DeploymentType Install -DeployMode Auto
+          Invoke-AppDeployToolkit.exe -DeploymentType Uninstall -DeployMode Auto
+        Shows a UAC prompt when the package has RequireAdmin = $true and
+        PowerShell is not elevated. Exit codes 0, 1641 and 3010 count as
+        success (1641/3010: restart required). Nothing is packaged or
+        uploaded, no Intune sign-in is needed, and without a config file the
+        default command lines are used. Note that Intune runs system installs
+        as SYSTEM, while this runs as you (elevated).
+
+    Common parameters
+        -WorkingDirectory <path>  Package folder (default: current directory)
+        -ConfigPath <file>        Use a specific config file
+        -WhatIf                   Build locally and show what would be uploaded,
+                                  without changing Intune; with -i/-u, show
+                                  what would run without running it
+        -Confirm:$false           Skip the confirmation prompt
+
+    Aliases
+        packageIntune and PSADTIntune both run Publish-PSADTIntuneApp, so
+        "PSADTIntune -i" and "packageIntune -i" are the same.
+
+DETECTION RULES
+    A grid (Out-ConsoleGridView) lists candidate rules; select one or more:
+      MSI   Product codes of .msi files found under the package's Files\ folder.
+      File  Targets of the 15 most recently changed Start Menu shortcuts on
+            THIS machine (all-users Start Menu for RequireAdmin = $true,
+            your own Start Menu otherwise). Shortcuts to files under the
+            Windows folder (msiexec.exe, cmd.exe, MSI icon stubs) are skipped.
+            A version-equals rule is used when the file has version info,
+            otherwise an exists rule.
+
+    Install the app locally before packaging (packageIntune -i) so its
+    shortcut shows up. The icon of the first selected file becomes the app
+    icon (otherwise the PSADT Assets\AppIcon.png is used). If you select
+    nothing, a PLACEHOLDER rule is added - you must fix it in Intune before
+    deploying.
+
+    The grid needs a real PowerShell 7 console (Windows Terminal, the VS Code
+    PowerShell terminal); it does not work in the PowerShell ISE.
+
+CONFIGURATION
+    Settings are stored in a JSON file outside the module folder, so they
+    survive Update-Module. The file is chosen in this order:
+      1. -ConfigPath parameter
+      2. $env:PSADTINTUNE_CONFIG environment variable
+      3. %APPDATA%\PSADTIntune\intune-config.json   (default)
+
+    Settings missing from the file fall back to the defaults below. Edit the
+    file directly or use Set-PSADTIntuneConfig; Get-PSADTIntuneConfig shows the
+    effective values and the file location.
+
+    Key (JSON)                    Set-PSADTIntuneConfig   Default
+    ----------------------------  ----------------------  -------------------
+    TenantId                      -TenantId               (required)
+    AADClientId                   -ClientId               (required)
+    Params.Owner                  -Owner                  (empty)
+    Params.AADGroupId             -AADGroupId             (none, no assignment)
+    Params.ScopeTagNameArray      -ScopeTag               ["Default"]
+    Params.Architecture           -Architecture           x64
+    Params.MinimumWindowsRelease  -MinimumWindowsRelease  W11_22H2
+    Params.InstallCommandLine     -InstallCommandLine     Invoke-AppDeployToolkit.exe
+                                                          -DeploymentType Install
+                                                          -DeployMode Auto
+    Params.UninstallCommandLine   -UninstallCommandLine   Invoke-AppDeployToolkit.exe
+                                                          -DeploymentType Uninstall
+                                                          -DeployMode Auto
+
+    Example file:
+      {
+        "TenantId": "contoso.onmicrosoft.com",
+        "AADClientId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "Params": {
+          "Owner": "Workplace Team",
+          "AADGroupId": "11111111-2222-3333-4444-555555555555",
+          "ScopeTagNameArray": ["Default"]
+        }
+      }
+
+PERMISSIONS
+    Sign-in is interactive (delegated) through IntuneWin32App's
+    Connect-MSIntuneGraph. Create an Entra ID app registration with:
+      - Platform "Mobile and desktop applications", redirect URI
+        http://localhost
+      - "Allow public client flows" enabled
+      - Delegated Microsoft Graph permissions (admin consent as required):
+          DeviceManagementApps.ReadWrite.All
+          DeviceManagementConfiguration.ReadWrite.All
+          DeviceManagementRBAC.Read.All
+          Group.Read.All
+    Use its Application (client) ID as ClientId. The signed-in user also needs
+    an Intune role that allows managing apps.
+
+TROUBLESHOOTING
+    No PSADTIntune config found
+        Run Set-PSADTIntuneConfig, or check Get-PSADTIntuneConfig for the path.
+    Could not extract AppName / AppVersion
+        The $adtSession block must contain AppName = '...' / AppVersion = '...'.
+    No PSADT v4 script found
+        Invoke-AppDeployToolkit.ps1 must be in the package folder.
+    Multiple .intunewin files found
+        Remove extra .intunewin files from the working directory.
+    No useful detection candidates
+        Install the app on this machine first; check its Start Menu shortcut.
+    Out-ConsoleGridView fails
+        Use a PowerShell 7 console, not the ISE.
+
+SEE ALSO
+    Get-Help Publish-PSADTIntuneApp -Full
+    Get-Help Set-PSADTIntuneConfig -Full
+    https://github.com/Dzhay/psadt-package-to-intune
+    https://github.com/MSEndpointMgr/IntuneWin32App
+    https://psappdeploytoolkit.com
+
+KEYWORDS
+    Intune, PSADT, PSAppDeployToolkit, Win32, intunewin

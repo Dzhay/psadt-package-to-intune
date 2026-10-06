@@ -1,0 +1,16 @@
+# Build output from packaging runs
+*.intunewin
+AppIcon.png
+
+# Local config copies (the real config lives in %APPDATA%\PSADTIntune)
+intune-config.local.json
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Logs / test output
+*.log
+TestResults/
