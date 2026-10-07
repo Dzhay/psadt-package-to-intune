@@ -1,6 +1,6 @@
 ﻿@{
     RootModule           = 'PSADTIntune.psm1'
-    ModuleVersion        = '0.8.0'
+    ModuleVersion        = '0.8.1'
     GUID                 = 'e0ef784f-8a0f-4e8e-9a93-e588eb489142'
     Author               = 'Darius Lakačauskis'
     Copyright            = '(c) 2026 Darius Lakačauskis. MIT License.'

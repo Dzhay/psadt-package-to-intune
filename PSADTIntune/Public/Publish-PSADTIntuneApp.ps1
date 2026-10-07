@@ -20,8 +20,10 @@ function Publish-PSADTIntuneApp {
         exist for the detection rules.
 
         Settings (tenant, app registration, owner, assignment group, scope tags, ...) come
-        from the config file. Run Set-PSADTIntuneConfig once to create it, or see
-        Get-Help about_PSADTIntune for details.
+        from the config file. On the first run without a config, packageIntune offers to
+        set it up: enter TenantId and ClientId at the prompt, or open the config file in
+        an editor. Change it later with Set-PSADTIntuneConfig or packageIntune -Config.
+        See Get-Help about_PSADTIntune for details.
 
         Aliases: packageIntune, PSADTIntune
 
@@ -58,6 +60,11 @@ function Publish-PSADTIntuneApp {
         Path to a config file to use instead of the default
         (%APPDATA%\PSADTIntune\intune-config.json or $env:PSADTINTUNE_CONFIG).
 
+    .PARAMETER Config
+        Opens the config file in an editor ($env:VISUAL, $env:EDITOR or Notepad), then
+        exits. Creates the file from the defaults first when it does not exist yet.
+        Combine with -ConfigPath to open a specific file.
+
     .PARAMETER Help
         Shows a short quick-start, the commands, and which config file is in use, then exits.
 
@@ -89,6 +96,10 @@ function Publish-PSADTIntuneApp {
     .EXAMPLE
         packageIntune -ConfigPath '\\server\share\intune-config.json'
         Uses a shared config file instead of the per-user one.
+
+    .EXAMPLE
+        packageIntune -Config
+        Opens the config file in an editor, creating it from the defaults on first use.
 
     .EXAMPLE
         packageIntune -WhatIf
@@ -141,7 +152,11 @@ function Publish-PSADTIntuneApp {
         [Parameter(ParameterSetName = 'Install')]
         [Parameter(ParameterSetName = 'Uninstall')]
         [Parameter(ParameterSetName = 'Help')]
+        [Parameter(ParameterSetName = 'Config')]
         [string]$ConfigPath,
+
+        [Parameter(Mandatory, ParameterSetName = 'Config')]
+        [switch]$Config,
 
         [Parameter(Mandatory, ParameterSetName = 'Help')]
         [switch]$Help
@@ -152,25 +167,32 @@ function Publish-PSADTIntuneApp {
         return
     }
 
+    if ($Config) {
+        Open-PSADTIntuneConfigFile -Path (Resolve-PSADTIntuneConfigPath -ConfigPath $ConfigPath).Path
+        return
+    }
+
     if ($Install -or $Uninstall) {
         # Only the command lines are needed; without a config file the defaults apply,
         # but an explicitly given -ConfigPath must exist
-        $config = Import-PSADTIntuneConfig -ConfigPath $ConfigPath -AllowMissing:(-not $ConfigPath)
+        $settings = Import-PSADTIntuneConfig -ConfigPath $ConfigPath -AllowMissing:(-not $ConfigPath)
         $package = Resolve-PSADTPackagePath -WorkingDirectory $WorkingDirectory
         $metadata = Get-PSADTAppInfo -ScriptPath $package.ScriptPath
         if ($Install) {
             $deploymentType = 'Install'
-            $commandLine = $config.Params.InstallCommandLine
+            $commandLine = $settings.Params.InstallCommandLine
         }
         else {
             $deploymentType = 'Uninstall'
-            $commandLine = $config.Params.UninstallCommandLine
+            $commandLine = $settings.Params.UninstallCommandLine
         }
         Invoke-PSADTDeployment -DeploymentType $deploymentType -PSADTDirectory $package.PSADTDirectory -CommandLine $commandLine -Metadata $metadata
         return
     }
 
-    $config = Import-PSADTIntuneConfig -ConfigPath $ConfigPath -RequireConnectionSettings
+    # First run: offer to set up a missing config instead of only failing
+    if (-not (Initialize-PSADTIntuneConfig -ConfigPath $ConfigPath)) { return }
+    $settings = Import-PSADTIntuneConfig -ConfigPath $ConfigPath -RequireConnectionSettings
     $package = Resolve-PSADTPackagePath -WorkingDirectory $WorkingDirectory
     $WorkingDirectory = $package.WorkingDirectory
     $PSADTDirectoryPath = $package.PSADTDirectory
@@ -196,10 +218,10 @@ function Publish-PSADTIntuneApp {
 
         # Route to upload or update
         if ($PSCmdlet.ParameterSetName -eq 'Update') {
-            Update-ExistingIntuneApp -AppId $AppId -Paths $Paths -Config $config -Metadata $metadata
+            Update-ExistingIntuneApp -AppId $AppId -Paths $Paths -Config $settings -Metadata $metadata
         }
         else {
-            $newApp = Invoke-IntuneUpload -Paths $Paths -Config $config -Metadata $metadata
+            $newApp = Invoke-IntuneUpload -Paths $Paths -Config $settings -Metadata $metadata
             if ($Supersede) {
                 if (-not $newApp) {
                     Write-Warning "Supersedence over '$Supersede' was not configured because no app was uploaded."
@@ -209,7 +231,7 @@ function Publish-PSADTIntuneApp {
                     if (-not $newAppIdStr) {
                         throw "Could not extract a valid app ID from the upload response. Raw value: $($newApp.id)"
                     }
-                    Set-IntuneAppSupersedence -NewAppId $newAppIdStr -OldAppId $Supersede -Config $config
+                    Set-IntuneAppSupersedence -NewAppId $newAppIdStr -OldAppId $Supersede -Config $settings
                 }
             }
         }

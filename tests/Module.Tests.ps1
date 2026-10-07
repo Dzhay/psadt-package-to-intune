@@ -124,8 +124,8 @@ Describe 'Help' {
 }
 
 Describe 'Parameters of Publish-PSADTIntuneApp' {
-    It 'has the parameter sets New, Update, Supersede, Install, Uninstall and Help' {
-        ((Get-Command -Name Publish-PSADTIntuneApp).ParameterSets.Name | Sort-Object) -join ',' | Should -Be 'Help,Install,New,Supersede,Uninstall,Update'
+    It 'has the parameter sets New, Update, Supersede, Install, Uninstall, Config and Help' {
+        ((Get-Command -Name Publish-PSADTIntuneApp).ParameterSets.Name | Sort-Object) -join ',' | Should -Be 'Config,Help,Install,New,Supersede,Uninstall,Update'
     }
 
     It 'accepts -i and -u as short forms of -Install and -Uninstall' {
@@ -140,6 +140,7 @@ Describe 'Parameters of Publish-PSADTIntuneApp' {
         @{ Description = '-Install together with -Uninstall'; Arguments = @{ Install = $true; Uninstall = $true } }
         @{ Description = '-Install together with -AppId'; Arguments = @{ Install = $true; AppId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' } }
         @{ Description = '-Uninstall together with -Supersede'; Arguments = @{ Uninstall = $true; Supersede = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' } }
+        @{ Description = '-Config together with -Install'; Arguments = @{ Config = $true; Install = $true } }
     ) {
         { Publish-PSADTIntuneApp @Arguments } | Should -Throw -ErrorId 'AmbiguousParameterSet*'
     }

@@ -3,10 +3,11 @@
 PowerShell module that packages [PSAppDeployToolkit](https://psappdeploytoolkit.com) (PSADT) v4 applications as `.intunewin` and creates, updates or supersedes them as Win32 apps in Microsoft Intune.
 
 ```powershell
-packageIntune -i                     # install the PSADT app in this folder on this computer
+packageIntune -Config                # setup config for Entra app and Intune app defaults
 packageIntune                        # package it and create a new Intune app
 packageIntune -AppId <app-guid>      # replace the package of an existing app
 packageIntune -Supersede <app-guid>  # create a new app that supersedes an existing one
+packageIntune -i                     # install the PSADT app in this folder on this computer
 packageIntune -u                     # uninstall it from this computer
 ```
 
@@ -37,7 +38,21 @@ Import-Module .\PSADTIntune\PSADTIntune.psd1
 
 ## Setup
 
-Configure your tenant and app registration once per user:
+Configure your tenant and app registration once per user. The first time you run `packageIntune` without a config, it offers to do this for you:
+
+```text
+No PSADTIntune config found at 'C:\Users\you\AppData\Roaming\PSADTIntune\intune-config.json'.
+  [Y] Set up now: enter TenantId and ClientId (default)
+  [E] Open the config file in an editor
+  [N] Cancel
+Set up the config? [Y/e/n]:
+```
+
+`Y` saves the tenant and client ID and continues with the upload. `E` creates the file from the defaults and opens it, so you can fill it in and run `packageIntune` again.
+
+To open the config file later, run `packageIntune -Config`. It uses `$env:VISUAL`, `$env:EDITOR` or Notepad.
+
+Or set values from the command line:
 
 ```powershell
 Set-PSADTIntuneConfig -TenantId 'contoso.onmicrosoft.com' -ClientId 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
@@ -145,6 +160,7 @@ Remove the exclusions when you're ready to roll out.
 | `-WhatIf` | Builds the package and shows what would be uploaded, without changing Intune. With `-i`/`-u`, shows what would run |
 | `-Confirm:$false` | Skips the confirmation prompt |
 | `-ConfigPath <file>` | Uses a specific config file |
+| `-Config` | Opens the config file in an editor (creates it from the defaults if missing) |
 | `-Help` | Shows a quick-start and which config file is in use |
 
 ## Help
@@ -173,7 +189,7 @@ The signed-in user also needs an Intune role that allows managing apps.
 
 | Problem | Solution |
 |---|---|
-| `No PSADTIntune config found` | Run `Set-PSADTIntuneConfig`; `Get-PSADTIntuneConfig` shows the expected path |
+| `No PSADTIntune config found` | Run `packageIntune` in an interactive console to be guided through setup, or use `packageIntune -Config` / `Set-PSADTIntuneConfig`. `Get-PSADTIntuneConfig` shows the expected path |
 | `Could not extract AppName` | The `$adtSession` block must contain `AppName = 'YourApp'` |
 | `No PSADT v4 script found` | `Invoke-AppDeployToolkit.ps1` must be in the package folder |
 | `Multiple .intunewin files` | Remove extra `.intunewin` files from the working directory |

@@ -20,6 +20,7 @@ function Show-PSADTIntuneQuickHelp {
     Write-Host "  packageIntune -Supersede <guid>                Create a new app that supersedes an existing one"
     Write-Host "  packageIntune -Install   (-i)                  Install the package on this computer (InstallCommandLine)"
     Write-Host "  packageIntune -Uninstall (-u)                  Uninstall it from this computer (UninstallCommandLine)"
+    Write-Host "  packageIntune -Config                          Open the config file in an editor"
     Write-Host "  Common options: -ConfigPath <file>  -WhatIf  -Confirm:`$false"
     Write-Host "  PSADTIntune works the same as packageIntune (both run Publish-PSADTIntuneApp)."
     Write-Host ""
@@ -29,6 +30,8 @@ function Show-PSADTIntuneQuickHelp {
     Write-Host "    +-- Contoso_Example_App_Package\   (Invoke-AppDeployToolkit.ps1/.exe, Files\, ...)"
     Write-Host ""
     Write-Host "CONFIG" -ForegroundColor Yellow
+    Write-Host "  The first packageIntune run offers to set it up. Or:"
+    Write-Host "  packageIntune -Config                                        # edit the file"
     Write-Host "  Set-PSADTIntuneConfig -TenantId 'contoso.onmicrosoft.com' -ClientId '<client-id>'"
     Write-Host "  Set-PSADTIntuneConfig -AADGroupId '<group-id>' -Owner 'IT'   # optional settings"
     Write-Host "  Get-PSADTIntuneConfig                                        # show effective settings"
@@ -38,7 +41,7 @@ function Show-PSADTIntuneQuickHelp {
     }
     else {
         Write-Host "  No config found at: $($location.Path)" -ForegroundColor Red
-        Write-Host "  Run Set-PSADTIntuneConfig to create it." -ForegroundColor Red
+        Write-Host "  Run packageIntune to be guided through setup, or packageIntune -Config to edit it." -ForegroundColor Red
     }
     Write-Host "  Source       : $($location.Source)"
     Write-Host ""

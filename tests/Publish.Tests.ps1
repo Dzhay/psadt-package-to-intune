@@ -244,11 +244,101 @@ Describe 'Publish-PSADTIntuneApp' {
             Should -Invoke New-IntuneWin32AppPackage -ModuleName PSADTIntune -Times 0 -Exactly
         }
 
-        It 'fails with setup instructions before packaging when there is no config' {
+    }
+
+    Context 'first run without a config' {
+        BeforeEach {
             $common.Remove('ConfigPath')
+            $defaultConfig = Join-Path $env:APPDATA 'PSADTIntune\intune-config.json'
+            Mock Start-Process -ModuleName PSADTIntune {}
+        }
+
+        It 'fails with setup instructions before packaging when <Case>' -ForEach @(
+            @{ Case = 'input is closed'; Answer = { $null } }
+            @{ Case = 'PowerShell is non-interactive'; Answer = { throw 'PowerShell is in NonInteractive mode.' } }
+        ) {
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'Set up the config*' } $Answer
 
             { Publish-PSADTIntuneApp @common } | Should -Throw '*Set-PSADTIntuneConfig*'
+            $defaultConfig | Should -Not -Exist
             Should -Invoke New-IntuneWin32AppPackage -ModuleName PSADTIntune -Times 0 -Exactly
+        }
+
+        It 'asks for TenantId and ClientId, saves them and continues with the upload' {
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'Set up the config*' } { 'y' }
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'TenantId*' } { $TestTenantId }
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'ClientId*' } { $TestClientId }
+
+            Publish-PSADTIntuneApp @common
+
+            (Get-PSADTIntuneConfig).TenantId | Should -Be $TestTenantId
+            Should -Invoke Connect-MSIntuneGraph -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter {
+                $TenantID -eq $TestTenantId -and $ClientID -eq $TestClientId
+            }
+            Should -Invoke Add-IntuneWin32App -ModuleName PSADTIntune -Times 1 -Exactly
+        }
+
+        It 'also offers setup when the config file exists without TenantId and ClientId' {
+            New-Item -ItemType Directory -Path (Split-Path $defaultConfig) -Force | Out-Null
+            Set-Content -LiteralPath $defaultConfig -Value '{ "TenantId": "", "AADClientId": "", "Params": { "Owner": "IT" } }'
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'TenantId*' } { $TestTenantId }
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'ClientId*' } { $TestClientId }
+
+            Publish-PSADTIntuneApp @common
+
+            (Get-PSADTIntuneConfig).Owner | Should -Be 'IT'
+            Should -Invoke Add-IntuneWin32App -ModuleName PSADTIntune -Times 1 -Exactly
+        }
+
+        It 'opens the default config in an editor and stops when the user picks E' {
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'Set up the config*' } { 'e' }
+
+            Publish-PSADTIntuneApp @common
+
+            $defaultConfig | Should -Exist
+            Should -Invoke Start-Process -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $ArgumentList -like "*$defaultConfig*" }
+            Should -Invoke New-IntuneWin32AppPackage -ModuleName PSADTIntune -Times 0 -Exactly
+        }
+
+        It 'stops without creating a config when the user cancels' {
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'Set up the config*' } { 'n' }
+
+            Publish-PSADTIntuneApp @common
+
+            $defaultConfig | Should -Not -Exist
+            Should -Invoke New-IntuneWin32AppPackage -ModuleName PSADTIntune -Times 0 -Exactly
+        }
+    }
+
+    Context 'open the config (-Config)' {
+        BeforeEach {
+            Mock Start-Process -ModuleName PSADTIntune {}
+        }
+
+        It 'creates the default config from the template and opens it' {
+            $defaultConfig = Join-Path $env:APPDATA 'PSADTIntune\intune-config.json'
+
+            Publish-PSADTIntuneApp -Config
+
+            $defaultConfig | Should -Exist
+            (Get-Content -LiteralPath $defaultConfig -Raw | ConvertFrom-Json).Params.Architecture | Should -Be 'x64'
+            Should -Invoke Start-Process -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $ArgumentList -like "*$defaultConfig*" }
+        }
+
+        It 'opens an existing config without changing it' {
+            $before = Get-Content -LiteralPath $configPath -Raw
+
+            Publish-PSADTIntuneApp -Config -ConfigPath $configPath
+
+            Get-Content -LiteralPath $configPath -Raw | Should -Be $before
+            Should -Invoke Start-Process -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $ArgumentList -like "*$configPath*" }
+        }
+
+        It 'does not package or connect' {
+            Publish-PSADTIntuneApp -Config -ConfigPath $configPath
+
+            Should -Invoke New-IntuneWin32AppPackage -ModuleName PSADTIntune -Times 0 -Exactly
+            Should -Invoke Connect-MSIntuneGraph -ModuleName PSADTIntune -Times 0 -Exactly
         }
     }
 

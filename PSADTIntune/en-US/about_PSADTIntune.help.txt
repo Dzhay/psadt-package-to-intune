@@ -24,7 +24,9 @@ QUICK START
     1. Install the module:
          Install-Module PSADTIntune -Scope CurrentUser
 
-    2. Configure your tenant and app registration (once per user):
+    2. Configure your tenant and app registration (once per user). The first
+       packageIntune run offers this: enter TenantId and ClientId at the
+       prompt, or open the config file in an editor. Or set them directly:
          Set-PSADTIntuneConfig -TenantId 'contoso.onmicrosoft.com' `
                                -ClientId 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
@@ -97,6 +99,12 @@ MODES
         default command lines are used. Note that Intune runs system installs
         as SYSTEM, while this runs as you (elevated).
 
+    Edit the config file
+        packageIntune -Config
+        Opens the config file in $env:VISUAL, $env:EDITOR or Notepad. Creates
+        it from the defaults first if it does not exist. Add -ConfigPath to
+        open a specific file.
+
     Common parameters
         -WorkingDirectory <path>  Package folder (default: current directory)
         -ConfigPath <file>        Use a specific config file
@@ -136,8 +144,8 @@ CONFIGURATION
       3. %APPDATA%\PSADTIntune\intune-config.json   (default)
 
     Settings missing from the file fall back to the defaults below. Edit the
-    file directly or use Set-PSADTIntuneConfig; Get-PSADTIntuneConfig shows the
-    effective values and the file location.
+    file with packageIntune -Config or use Set-PSADTIntuneConfig;
+    Get-PSADTIntuneConfig shows the effective values and the file location.
 
     Key (JSON)                    Set-PSADTIntuneConfig   Default
     ----------------------------  ----------------------  -------------------
@@ -181,7 +189,10 @@ PERMISSIONS
 
 TROUBLESHOOTING
     No PSADTIntune config found
-        Run Set-PSADTIntuneConfig, or check Get-PSADTIntuneConfig for the path.
+        Run packageIntune in an interactive console to be guided through
+        setup, run packageIntune -Config or Set-PSADTIntuneConfig, or check
+        Get-PSADTIntuneConfig for the path. Non-interactive sessions (CI,
+        -NonInteractive) fail instead of prompting.
     Could not extract AppName / AppVersion
         The $adtSession block must contain AppName = '...' / AppVersion = '...'.
     No PSADT v4 script found

@@ -6,12 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-First release (0.8.0) as a PowerShell module (previously the standalone script `packageIntune.ps1`).
+First release (0.8.1) as a PowerShell module (previously the standalone script `packageIntune.ps1`).
 
 ### Added
 - Module `PSADTIntune` with `Publish-PSADTIntuneApp` (aliases `packageIntune` and `PSADTIntune`), `Set-PSADTIntuneConfig` and `Get-PSADTIntuneConfig`.
 - `-Install` (`-i`) and `-Uninstall` (`-u`) install or uninstall the package on this computer with the configured install/uninstall command line. They prompt for elevation when the package requires admin rights.
 - Per-user config at `%APPDATA%\PSADTIntune\intune-config.json`, overridable with `-ConfigPath` or `$env:PSADTINTUNE_CONFIG`. Missing keys fall back to the defaults.
+- First-run setup: when `packageIntune` runs without a config (or without `TenantId`/`AADClientId`) in an interactive console, it offers to prompt for them and continue, or to open the config file in an editor. Non-interactive sessions still fail with setup instructions.
+- `packageIntune -Config` opens the config file in `$env:VISUAL`, `$env:EDITOR` or Notepad, creating it from the defaults if needed.
+- `Set-PSADTIntuneConfig` without parameters now also prompts for `TenantId`/`ClientId` when the file exists but they are empty.
 - `packageIntune -Help`, comment-based help for all commands, and `Get-Help about_PSADTIntune`.
 - `-WhatIf` / `-Confirm` support for all Intune changes.
 - `-AppId` now sets the app version to the PSADT `AppVersion` and warns that detection rules are not updated.

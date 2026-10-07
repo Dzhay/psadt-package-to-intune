@@ -11,8 +11,10 @@ function Set-PSADTIntuneConfig {
 
         The file lives outside the module folder, so it survives Update-Module.
 
-        When no config exists yet and you run the command without -TenantId/-ClientId,
-        you are prompted for them.
+        When TenantId or ClientId is not set yet, you are prompted for it if you are
+        creating a new config file or run the command without parameters.
+
+        To edit the file by hand instead, run packageIntune -Config.
 
         Settings:
           TenantId              Entra ID tenant, e.g. contoso.onmicrosoft.com or a tenant GUID (required)
@@ -135,30 +137,6 @@ function Set-PSADTIntuneConfig {
 
     $location = Resolve-PSADTIntuneConfigPath -ConfigPath $ConfigPath
 
-    # Start from the existing file, or from the shipped template for a new one
-    if ($location.Exists) {
-        $config = Read-PSADTIntuneConfigFile -Path $location.Path
-    }
-    else {
-        $config = Read-PSADTIntuneConfigFile -Path $script:DefaultConfigPath
-        # Prompted values go into new variables: the parameter variables keep their validation
-        # attributes, which would reject bad input with a generic error before the check below
-        if (-not $PSBoundParameters.ContainsKey('TenantId')) {
-            $promptedTenantId = (Read-Host "TenantId (e.g. contoso.onmicrosoft.com)").Trim()
-            if ($promptedTenantId) { $PSBoundParameters['TenantId'] = $promptedTenantId }
-        }
-        if (-not $PSBoundParameters.ContainsKey('ClientId')) {
-            $promptedClientId = (Read-Host "ClientId (app registration client ID)").Trim()
-            if ($promptedClientId -and $promptedClientId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-                throw "'$promptedClientId' is not a valid client ID (GUID). Nothing was saved."
-            }
-            if ($promptedClientId) { $PSBoundParameters['ClientId'] = $promptedClientId }
-        }
-    }
-    if ($null -eq $config.PSObject.Properties['Params']) {
-        $config | Add-Member -NotePropertyName 'Params' -NotePropertyValue ([PSCustomObject]@{})
-    }
-
     # Parameter name -> config key (top level or under Params)
     $topLevelKeys = @{ TenantId = 'TenantId'; ClientId = 'AADClientId' }
     $paramsKeys = @{
@@ -169,6 +147,35 @@ function Set-PSADTIntuneConfig {
         MinimumWindowsRelease = 'MinimumWindowsRelease'
         InstallCommandLine    = 'InstallCommandLine'
         UninstallCommandLine  = 'UninstallCommandLine'
+    }
+
+    # Start from the existing file, or from the shipped template for a new one
+    if ($location.Exists) {
+        $config = Read-PSADTIntuneConfigFile -Path $location.Path
+    }
+    else {
+        $config = Read-PSADTIntuneConfigFile -Path $script:DefaultConfigPath
+    }
+
+    # Prompt for unset connection settings when creating the file or when run without settings
+    $settingPassed = $PSBoundParameters.Keys | Where-Object { $topLevelKeys.ContainsKey($_) -or $paramsKeys.ContainsKey($_) }
+    if (-not $location.Exists -or -not $settingPassed) {
+        # Prompted values go into new variables: the parameter variables keep their validation
+        # attributes, which would reject bad input with a generic error before the check below
+        if (-not $PSBoundParameters.ContainsKey('TenantId') -and -not (Test-PSADTIntuneConfigValue -Value $config.TenantId)) {
+            $promptedTenantId = (Read-Host "TenantId (e.g. contoso.onmicrosoft.com)").Trim()
+            if ($promptedTenantId) { $PSBoundParameters['TenantId'] = $promptedTenantId }
+        }
+        if (-not $PSBoundParameters.ContainsKey('ClientId') -and -not (Test-PSADTIntuneConfigValue -Value $config.AADClientId)) {
+            $promptedClientId = (Read-Host "ClientId (app registration client ID)").Trim()
+            if ($promptedClientId -and $promptedClientId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+                throw "'$promptedClientId' is not a valid client ID (GUID). Nothing was saved."
+            }
+            if ($promptedClientId) { $PSBoundParameters['ClientId'] = $promptedClientId }
+        }
+    }
+    if ($null -eq $config.PSObject.Properties['Params']) {
+        $config | Add-Member -NotePropertyName 'Params' -NotePropertyValue ([PSCustomObject]@{})
     }
 
     $changed = @()

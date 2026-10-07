@@ -281,6 +281,20 @@ Describe 'Set-PSADTIntuneConfig' {
             Should -Invoke Read-Host -ModuleName PSADTIntune -Times 0 -Exactly
         }
 
+        It 'asks for TenantId and ClientId when run without parameters and they are not set' {
+            New-Item -ItemType Directory -Path (Split-Path $path) -Force | Out-Null
+            Set-Content -LiteralPath $path -Value '{ "TenantId": "", "AADClientId": "", "Params": { "Owner": "IT" } }'
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'TenantId*' } { 'fabrikam.onmicrosoft.com' }
+            Mock Read-Host -ModuleName PSADTIntune -ParameterFilter { $Prompt -like 'ClientId*' } { 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' }
+
+            Set-PSADTIntuneConfig
+
+            $config = Get-PSADTIntuneConfig
+            $config.TenantId | Should -Be 'fabrikam.onmicrosoft.com'
+            $config.AADClientId | Should -Be $TestClientId
+            $config.Owner | Should -Be 'IT'
+        }
+
         It 'does not ask for values that are passed' {
             Set-PSADTIntuneConfig -TenantId $TestTenantId -ClientId $TestClientId
 
