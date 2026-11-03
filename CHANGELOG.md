@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-03
+
 ### Changed
 - The packager's detection row is labelled `Packager (stale)`, with a warning, when `Invoke-AppDeployToolkit.ps1` changed after `PackageInfo.json` was written (its `ScriptHash` no longer matches), and `Packager (not verified)` when `Tests.Verified` is false.
 
