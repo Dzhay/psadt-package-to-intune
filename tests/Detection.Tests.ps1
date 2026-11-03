@@ -325,6 +325,53 @@ Describe 'Select-AppDetectionRule' {
             $rules[0].fileOrFolderName | Should -Be 'gone.exe'
         }
 
+        Context 'script changed or not verified' {
+            BeforeAll {
+                $scriptFile = Join-Path $packageDirectory 'Invoke-AppDeployToolkit.ps1'
+                $writeInfo = {
+                    param([hashtable]$Extra)
+                    $info = @{ SchemaVersion = 1; Detection = @{ Type = 'File'; Path = 'C:\Program Files\Gone'; File = 'gone.exe'; Version = $null } }
+                    foreach ($key in $Extra.Keys) { $info[$key] = $Extra[$key] }
+                    $info | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $infoPath
+                }
+            }
+
+            BeforeEach {
+                $hadScript = Test-Path -LiteralPath $scriptFile
+                if (-not $hadScript) { Set-Content -LiteralPath $scriptFile -Value '# script' }
+                $hash = (Get-FileHash -LiteralPath $scriptFile -Algorithm SHA256).Hash
+            }
+
+            AfterEach {
+                if (-not $hadScript) { Remove-Item -LiteralPath $scriptFile -ErrorAction SilentlyContinue }
+            }
+
+            It 'keeps the tested label when the script hash matches' {
+                & $writeInfo @{ ScriptHash = $hash; Tests = @{ Verified = $true } }
+
+                $null = Invoke-Selection -Select 'gone.exe'
+
+                $script:GridCandidates[0].Source | Should -Be 'Packager (tested)'
+            }
+
+            It 'labels the row stale and warns when the script changed after the test' {
+                & $writeInfo @{ ScriptHash = ('0' * 64); Tests = @{ Verified = $true } }
+
+                $null = Invoke-Selection -Select 'gone.exe'
+
+                $script:GridCandidates[0].Source | Should -Be 'Packager (stale)'
+                Should -Invoke Write-Warning -ModuleName PSADTIntune -ParameterFilter { $Message -like '*changed after PackageInfo.json*' }
+            }
+
+            It 'labels the row not verified when the packager could not verify the package' {
+                & $writeInfo @{ ScriptHash = $hash; Tests = @{ Verified = $false } }
+
+                $null = Invoke-Selection -Select 'gone.exe'
+
+                $script:GridCandidates[0].Source | Should -Be 'Packager (not verified)'
+            }
+        }
+
         It 'creates an exists rule when the tested detection has no version' {
             Set-PackageInfo @{ Type = 'File'; Path = 'C:\Program Files\Gone'; File = 'gone.exe'; Version = $null }
 

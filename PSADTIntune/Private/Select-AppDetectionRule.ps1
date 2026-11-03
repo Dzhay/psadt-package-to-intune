@@ -6,7 +6,10 @@ function Select-AppDetectionRule {
     .DESCRIPTION
         File-based candidates come from the 15 most recently modified Start Menu shortcuts
         on the packaging machine, so the app should be installed locally first. Every row
-        has a Source column: 'MSI' (Files\), 'Start Menu' or 'Packager (tested)'.
+        has a Source column: 'MSI' (Files\), 'Start Menu' or 'Packager (tested)'. The packager
+        row is 'Packager (stale)' with a warning when the script's SHA-256 differs from
+        PackageInfo.json's ScriptHash (the script was edited after the test), and
+        'Packager (not verified)' when Tests.Verified is false.
 
         When PackageInfo.json (written by PSADT-Packager) has a Detection entry, it is the
         first row. It stays valid when the file does not exist on this machine, because the
@@ -37,10 +40,22 @@ function Select-AppDetectionRule {
     $packagerDetection = $null
     if ($packageInfo -and $packageInfo.Detection) {
         $d = $packageInfo.Detection
+        # The packager stores the script's SHA-256; a different hash means the script was edited after the test
+        $packagerSource = 'Packager (tested)'
+        $scriptPath = Join-Path -Path $Paths.PSADTDirectory -ChildPath 'Invoke-AppDeployToolkit.ps1'
+        if ($packageInfo.ScriptHash -and (Test-Path -LiteralPath $scriptPath -PathType Leaf) -and
+            (Get-FileHash -LiteralPath $scriptPath -Algorithm SHA256).Hash -ne [string]$packageInfo.ScriptHash) {
+            $packagerSource = 'Packager (stale)'
+            Write-Warning 'Invoke-AppDeployToolkit.ps1 changed after PackageInfo.json was written: check the Packager detection row, or retest with Test-PSADTPackage first.'
+        }
+        elseif ($packageInfo.Tests -and $packageInfo.Tests.Verified -eq $false) {
+            $packagerSource = 'Packager (not verified)'
+            Write-Warning 'PackageInfo.json says the package is not verified: check the Packager detection row.'
+        }
         if ($d.Type -eq 'File' -and $d.File) {
             $packagerDetection = [PSCustomObject]@{
                 'Type'         = 'File'
-                'Source'       = 'Packager (tested)'
+                'Source'       = $packagerSource
                 'Property'     = [string]$d.File
                 'VersionValue' = if ($d.Version) { [string]$d.Version } else { $null }
                 'Path'         = [string]$d.Path
@@ -49,7 +64,7 @@ function Select-AppDetectionRule {
         elseif ($d.Type -eq 'MSI' -and $d.ProductCode) {
             $packagerDetection = [PSCustomObject]@{
                 'Type'         = 'MSI'
-                'Source'       = 'Packager (tested)'
+                'Source'       = $packagerSource
                 'Property'     = ([string]$d.ProductCode).Trim()
                 'VersionValue' = $null
                 'Path'         = $null
