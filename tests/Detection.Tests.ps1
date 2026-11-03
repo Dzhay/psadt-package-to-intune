@@ -83,7 +83,18 @@ Describe 'Select-AppDetectionRule' {
             $context = if ($RequireAdmin) { 'system' } else { 'user' }
             InModuleScope PSADTIntune -Parameters @{ RequireAdmin = $RequireAdmin; Context = $context; Paths = $paths } {
                 param($RequireAdmin, $Context, $Paths)
-                Select-AppDetectionRule -RequireAdmin $RequireAdmin -Context $Context -Paths $Paths
+                (Select-AppDetectionRule -RequireAdmin $RequireAdmin -Context $Context -Paths $Paths).DetectionRules
+            }
+        }
+
+        # Same for a system install, but returns the whole result (DetectionRules and IconPath)
+        function Invoke-SelectionResult {
+            param([string[]]$Select = @())
+            $script:GridCandidates = @()
+            $script:SelectProperties = $Select
+            InModuleScope PSADTIntune -Parameters @{ Paths = $paths } {
+                param($Paths)
+                Select-AppDetectionRule -RequireAdmin $true -Context 'system' -Paths $Paths
             }
         }
     }
@@ -201,16 +212,59 @@ Describe 'Select-AppDetectionRule' {
 
     Context 'app icon' {
         BeforeEach {
+            Remove-Item -LiteralPath (Join-Path $packageDirectory 'AppIcon.png') -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath (Join-Path $workingDirectory 'AppIcon.png') -ErrorAction SilentlyContinue
+            $result = $null
         }
 
-        It 'saves the icon of the selected file as AppIcon.png' {
-            $null = Invoke-Selection -Select 'Contoso.exe'
+        AfterEach {
+            # The caller owns the temp folder; remove it here
+            if ($result -and $result.IconPath) {
+                Remove-Item -LiteralPath (Split-Path $result.IconPath -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
 
-            $icon = Join-Path $workingDirectory 'AppIcon.png'
-            $icon | Should -Exist
+        It 'extracts the icon of the selected file into a new temp folder, not the working directory' {
+            $result = Invoke-SelectionResult -Select 'Contoso.exe'
+
+            $result.IconPath | Should -Exist
             # PNG signature
-            ([System.IO.File]::ReadAllBytes($icon)[0..3] -join ',') | Should -Be '137,80,78,71'
+            ([System.IO.File]::ReadAllBytes($result.IconPath)[0..3] -join ',') | Should -Be '137,80,78,71'
+            $folder = Split-Path $result.IconPath -Parent
+            (Split-Path $folder -Leaf) | Should -BeLike 'PSADTIntune_*'
+            ([System.IO.Path]::GetFullPath($folder) -like ([System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()) + 'PSADTIntune_*')) | Should -BeTrue
+            (Join-Path $workingDirectory 'AppIcon.png') | Should -Not -Exist
+        }
+
+        It 'does not extract an icon when the package has an AppIcon.png' {
+            New-TestPng -Path (Join-Path $packageDirectory 'AppIcon.png') | Out-Null
+            Mock Export-AppIcon -ModuleName PSADTIntune {}
+
+            $result = Invoke-SelectionResult -Select 'Contoso.exe'
+
+            Should -Invoke Export-AppIcon -ModuleName PSADTIntune -Times 0 -Exactly
+            $result.IconPath | Should -BeNullOrEmpty
+            @($result.DetectionRules).Count | Should -Be 1
+        }
+
+        It 'returns no icon path when only an MSI is selected' {
+            Mock Export-AppIcon -ModuleName PSADTIntune {}
+
+            $result = Invoke-SelectionResult -Select $mainProductCode
+
+            Should -Invoke Export-AppIcon -ModuleName PSADTIntune -Times 0 -Exactly
+            $result.IconPath | Should -BeNullOrEmpty
+        }
+
+        It 'removes the temp folder again when no icon file is produced' {
+            $script:ExportDestination = $null
+            Mock Export-AppIcon -ModuleName PSADTIntune { $script:ExportDestination = $Destination }
+
+            $result = Invoke-SelectionResult -Select 'Contoso.exe'
+
+            $result.IconPath | Should -BeNullOrEmpty
+            $script:ExportDestination | Should -BeLike '*PSADTIntune_*'
+            $script:ExportDestination | Should -Not -Exist
         }
 
         It 'extracts the icon only once when several files are selected' {
@@ -228,6 +282,92 @@ Describe 'Select-AppDetectionRule' {
 
             $rules.Count | Should -Be 1
             Should -Invoke Write-Warning -ModuleName PSADTIntune -ParameterFilter { $Message -like 'Could not extract icon*' }
+        }
+    }
+
+    Context 'Source column' {
+        It 'labels MSI and Start Menu rows' {
+            $null = Invoke-Selection
+
+            @($script:GridCandidates | Where-Object Type -eq 'MSI').Source | Select-Object -Unique | Should -Be 'MSI'
+            @($script:GridCandidates | Where-Object Type -eq 'File').Source | Select-Object -Unique | Should -Be 'Start Menu'
+        }
+    }
+
+    Context 'detection from PackageInfo.json' {
+        BeforeAll {
+            $infoPath = Join-Path $packageDirectory 'PackageInfo.json'
+            function Set-PackageInfo {
+                param($Detection)
+                @{ SchemaVersion = 1; Detection = $Detection } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $infoPath
+            }
+        }
+
+        AfterEach {
+            Remove-Item -LiteralPath $infoPath -ErrorAction SilentlyContinue
+        }
+
+        It 'puts a tested File detection first, valid even when the file does not exist' {
+            Set-PackageInfo @{ Type = 'File'; Path = 'C:\Program Files\Gone'; File = 'gone.exe'; Version = '1.2.3.4' }
+
+            $rules = @(Invoke-Selection -Select 'gone.exe')
+
+            $first = $script:GridCandidates[0]
+            $first.Source | Should -Be 'Packager (tested)'
+            $first.Type | Should -Be 'File'
+            $first.Property | Should -Be 'gone.exe'
+            $first.VersionValue | Should -Be '1.2.3.4'
+            $first.Path | Should -Be 'C:\Program Files\Gone'
+            $rules.Count | Should -Be 1
+            $rules[0].detectionType | Should -Be 'version'
+            $rules[0].detectionValue | Should -Be '1.2.3.4'
+            $rules[0].path | Should -Be 'C:\Program Files\Gone'
+            $rules[0].fileOrFolderName | Should -Be 'gone.exe'
+        }
+
+        It 'creates an exists rule when the tested detection has no version' {
+            Set-PackageInfo @{ Type = 'File'; Path = 'C:\Program Files\Gone'; File = 'gone.exe'; Version = $null }
+
+            $rules = @(Invoke-Selection -Select 'gone.exe')
+
+            $rules[0].detectionType | Should -Be 'exists'
+        }
+
+        It 'puts a tested MSI detection first as a product code row' {
+            Set-PackageInfo @{ Type = 'MSI'; ProductCode = '{CCCCCCCC-1111-2222-3333-444444444444}' }
+
+            $rules = @(Invoke-Selection -Select '{CCCCCCCC-1111-2222-3333-444444444444}')
+
+            $script:GridCandidates[0].Source | Should -Be 'Packager (tested)'
+            $script:GridCandidates[0].Type | Should -Be 'MSI'
+            $rules[0].productCode | Should -Be '{CCCCCCCC-1111-2222-3333-444444444444}'
+        }
+
+        It 'drops a shortcut row that duplicates the tested File detection' {
+            Set-PackageInfo @{ Type = 'File'; Path = $appDirectory; File = 'Contoso.exe'; Version = $expectedVersion }
+
+            $null = Invoke-Selection
+
+            @($script:GridCandidates | Where-Object Property -eq 'Contoso.exe').Count | Should -Be 1
+            $script:GridCandidates[0].Source | Should -Be 'Packager (tested)'
+            @($script:GridCandidates | Where-Object Source -eq 'Start Menu').Property | Should -Contain 'Helper.exe'
+        }
+
+        It 'drops an MSI row that duplicates the tested product code' {
+            Set-PackageInfo @{ Type = 'MSI'; ProductCode = $mainProductCode }
+
+            $null = Invoke-Selection
+
+            @($script:GridCandidates | Where-Object Property -eq $mainProductCode).Count | Should -Be 1
+            @($script:GridCandidates | Where-Object Type -eq 'MSI').Property | Should -Contain $addonProductCode
+        }
+
+        It 'adds no extra row without a Detection entry' {
+            Set-Content -LiteralPath $infoPath -Value '{ "SchemaVersion": 1 }'
+
+            $null = Invoke-Selection
+
+            $script:GridCandidates.Source | Should -Not -Contain 'Packager (tested)'
         }
     }
 }

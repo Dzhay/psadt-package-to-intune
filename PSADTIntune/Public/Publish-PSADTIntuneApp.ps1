@@ -10,8 +10,14 @@ function Publish-PSADTIntuneApp {
 
         App name, version, vendor and install context are read from the $adtSession
         block in Invoke-AppDeployToolkit.ps1. Detection rules are picked in a grid from
-        MSI product codes found under Files\ and from recent Start Menu shortcuts on this
+        the tested detection in PackageInfo.json (first row, when PSADT-Packager wrote one),
+        MSI product codes found under Files\ and recent Start Menu shortcuts on this
         machine (so install the app locally first).
+
+        Optional files in the package folder, written by PSADT-Packager: AppIcon.png is
+        the app icon (otherwise the icon of the first selected executable, then the PSADT
+        Assets\AppIcon.png), and PackageInfo.json supplies the Company Portal description
+        (otherwise "<Vendor> <App> <Version>"). -AppId updates leave the metadata alone.
 
         With -Install (-i) or -Uninstall (-u), the package is instead installed or
         uninstalled on this computer with the configured InstallCommandLine or
@@ -239,8 +245,7 @@ function Publish-PSADTIntuneApp {
         # Cleanup if working directory is the PSADT directory (keep the package folder clean)
         if ($WorkingDirectory -eq $PSADTDirectoryPath) {
             Get-ChildItem -LiteralPath $WorkingDirectory -Filter '*.intunewin' | Remove-Item -Force -WhatIf:$false -Confirm:$false
-            Get-ChildItem -LiteralPath $WorkingDirectory -Filter 'AppIcon.png' | Remove-Item -Force -WhatIf:$false -Confirm:$false
-            Write-Host "Removed IntuneWin and AppIcon files from $WorkingDirectory" -ForegroundColor Green
+            Write-Host "Removed IntuneWin file from $WorkingDirectory" -ForegroundColor Green
         }
     }
     finally {

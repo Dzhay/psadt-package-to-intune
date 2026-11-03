@@ -6,7 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-First release (0.8.1) as a PowerShell module (previously the standalone script `packageIntune.ps1`).
+## [0.9.0] - 2026-11-03
+
+### Added
+- `PackageInfo.json` (written by PSADT-Packager next to `Invoke-AppDeployToolkit.ps1`) is read when present. Its `Detection` entry becomes the first row of the detection grid (`Packager (tested)`), valid even when the file is not on this machine, and its `Description` is used as the Company Portal description instead of `<Vendor> <App> <Version>` when not empty. A missing file is ignored; invalid JSON gives a warning.
+- The detection grid has a `Source` column: `MSI`, `Start Menu` or `Packager (tested)`.
+- An `AppIcon.png` in the package folder is used as the app icon.
+
+### Changed
+- Icon order: `AppIcon.png` in the package folder, then the icon extracted from the first selected executable, then the PSADT `Assets\AppIcon.png`. The extracted icon now goes to a temporary folder that is removed after the upload (also with `-WhatIf`, when declined and on errors), instead of `AppIcon.png` in the working directory.
+- The icon extracted from an executable is its largest icon (up to 256 x 256) instead of 32 x 32.
+
+### Fixed
+- When run inside the package folder, the cleanup after the upload deleted the packager's `AppIcon.png`. Only the `.intunewin` is removed now.
+
+## [0.8.1] - 2026-10-07
+
+First release as a PowerShell module (previously the standalone script `packageIntune.ps1`).
 
 ### Added
 - Module `PSADTIntune` with `Publish-PSADTIntuneApp` (aliases `packageIntune` and `PSADTIntune`), `Set-PSADTIntuneConfig` and `Get-PSADTIntuneConfig`.

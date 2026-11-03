@@ -5,9 +5,23 @@ function Select-AppDetectionRule {
         Start Menu shortcuts on this machine, letting the user pick them in a grid.
     .DESCRIPTION
         File-based candidates come from the 15 most recently modified Start Menu shortcuts
-        on the packaging machine, so the app should be installed locally first. The icon of
-        the first selected file is saved as AppIcon.png in the working directory.
+        on the packaging machine, so the app should be installed locally first. Every row
+        has a Source column: 'MSI' (Files\), 'Start Menu' or 'Packager (tested)'.
+
+        When PackageInfo.json (written by PSADT-Packager) has a Detection entry, it is the
+        first row. It stays valid when the file does not exist on this machine, because the
+        packager tested it and the app may have been uninstalled since. Later MSI and
+        shortcut rows that duplicate it are dropped.
+
+        Icon: when <PSADTDirectory>\AppIcon.png exists, nothing is extracted. Otherwise the
+        icon of the first selected existing file is extracted into a new temporary folder
+        (PSADTIntune_<guid> under the temp path), never into the working directory. The
+        caller removes that folder.
+
         If nothing is selected, a PLACEHOLDER rule is returned that must be fixed in Intune.
+    .OUTPUTS
+        [pscustomobject] with DetectionRules (list of rule objects) and IconPath (the
+        extracted PNG in the temporary folder, or $null).
     #>
     [CmdletBinding()]
     param(
@@ -18,17 +32,64 @@ function Select-AppDetectionRule {
 
     $PossibleDetections = [System.Collections.Generic.List[object]]::new()
 
+    # Tested detection from the packager is the first row
+    $packageInfo = Get-PackageInfo -PackageDirectory $Paths.PSADTDirectory
+    $packagerDetection = $null
+    if ($packageInfo -and $packageInfo.Detection) {
+        $d = $packageInfo.Detection
+        if ($d.Type -eq 'File' -and $d.File) {
+            $packagerDetection = [PSCustomObject]@{
+                'Type'         = 'File'
+                'Source'       = 'Packager (tested)'
+                'Property'     = [string]$d.File
+                'VersionValue' = if ($d.Version) { [string]$d.Version } else { $null }
+                'Path'         = [string]$d.Path
+            }
+        }
+        elseif ($d.Type -eq 'MSI' -and $d.ProductCode) {
+            $packagerDetection = [PSCustomObject]@{
+                'Type'         = 'MSI'
+                'Source'       = 'Packager (tested)'
+                'Property'     = ([string]$d.ProductCode).Trim()
+                'VersionValue' = $null
+                'Path'         = $null
+            }
+        }
+        else {
+            Write-Warning "Ignoring unsupported or incomplete Detection in PackageInfo.json (Type '$($d.Type)')."
+        }
+    }
+    if ($packagerDetection) {
+        $PossibleDetections.Add($packagerDetection)
+    }
+
+    # Same rule as the packager row: MSI by product code, File by folder and file name
+    function Test-DuplicateOfPackager {
+        param($Candidate)
+        if (-not $packagerDetection -or $Candidate.Type -ne $packagerDetection.Type) { return $false }
+        if ($Candidate.Type -eq 'MSI') {
+            return $Candidate.Property -eq $packagerDetection.Property
+        }
+        $candidateFull = Join-Path ([string]$Candidate.Path).TrimEnd('\') $Candidate.Property
+        $packagerFull = Join-Path ([string]$packagerDetection.Path).TrimEnd('\') $packagerDetection.Property
+        return $candidateFull -eq $packagerFull
+    }
+
     # MSI detection
     $MSIPaths = Get-ChildItem -LiteralPath (Join-Path $Paths.PSADTDirectory 'Files') -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -eq '.msi' }
     foreach ($MSIPath in $MSIPaths) {
         $Property = ([string](Get-MSIMetaData -Path $MSIPath.FullName -Property ProductCode)).Trim()
-        $PossibleDetections.Add([PSCustomObject]@{
-                'Type'         = 'MSI'
-                'Property'     = $Property
-                'VersionValue' = $null
-                'Path'         = $MSIPath.FullName
-            })
+        $candidate = [PSCustomObject]@{
+            'Type'         = 'MSI'
+            'Source'       = 'MSI'
+            'Property'     = $Property
+            'VersionValue' = $null
+            'Path'         = $MSIPath.FullName
+        }
+        if (-not (Test-DuplicateOfPackager -Candidate $candidate)) {
+            $PossibleDetections.Add($candidate)
+        }
     }
 
     # File detection via shortcuts
@@ -74,12 +135,16 @@ function Select-AppDetectionRule {
             if ($Version -notmatch '^\d+(\.\d+)+$' -or $Version -eq '0.0.0.0') {
                 $Version = $null
             }
-            $PossibleDetections.Add([PSCustomObject]@{
-                    'Type'         = 'File'
-                    'Property'     = $Name
-                    'VersionValue' = $Version
-                    'Path'         = Split-Path -Path $AppPath -Parent
-                })
+            $candidate = [PSCustomObject]@{
+                'Type'         = 'File'
+                'Source'       = 'Start Menu'
+                'Property'     = $Name
+                'VersionValue' = $Version
+                'Path'         = Split-Path -Path $AppPath -Parent
+            }
+            if (-not (Test-DuplicateOfPackager -Candidate $candidate)) {
+                $PossibleDetections.Add($candidate)
+            }
         }
     }
     finally {
@@ -97,7 +162,7 @@ function Select-AppDetectionRule {
         Write-Warning "No detection rule selected. Adding placeholder rule - you MUST update this in Intune before deploying."
         $DetectionRule = New-IntuneWin32AppDetectionRuleFile -Path 'C:\Program Files\PLACEHOLDER' -FileOrFolder 'PLACEHOLDER.exe' -DetectionType Exists -Existence -Check32BitOn64System $false
         $DetectionRules.Add($DetectionRule) | Out-Null
-        return $DetectionRules
+        return [PSCustomObject]@{ DetectionRules = $DetectionRules; IconPath = $null }
     }
 
     # Multiple MSI selected - error
@@ -105,44 +170,65 @@ function Select-AppDetectionRule {
         throw "Multiple MSI detection rules selected. Please select only one MSI detection rule."
     }
 
-    $iconExtracted = $false
-    foreach ($item in $selected) {
-        if ($item.Type -eq 'MSI') {
-            $DetectionRule = New-IntuneWin32AppDetectionRuleMSI -ProductCode $item.Property
-        }
-        elseif ($item.Type -eq 'File') {
-            # Use the first selected executable's icon as the app icon
-            if (-not $iconExtracted) {
-                try {
-                    Export-AppIcon -Path (Join-Path $item.Path $item.Property) -Destination $Paths.WorkingDirectory -Name 'AppIcon' -Format 'png' | Out-Null
-                    $iconExtracted = $true
+    # A package-supplied AppIcon.png wins, so nothing is extracted
+    $iconNeeded = -not (Test-Path -LiteralPath (Join-Path $Paths.PSADTDirectory 'AppIcon.png') -PathType Leaf)
+    $iconPath = $null
+    $iconDone = $false
+    $iconFolder = $null
+    $completed = $false
+    try {
+        foreach ($item in $selected) {
+            if ($item.Type -eq 'MSI') {
+                $DetectionRule = New-IntuneWin32AppDetectionRuleMSI -ProductCode $item.Property
+            }
+            elseif ($item.Type -eq 'File') {
+                # Use the first selected existing executable's icon as the app icon
+                $itemFile = Join-Path $item.Path $item.Property
+                if ($iconNeeded -and -not $iconDone -and (Test-Path -LiteralPath $itemFile -PathType Leaf)) {
+                    try {
+                        if (-not $iconFolder) {
+                            $iconFolder = Join-Path ([System.IO.Path]::GetTempPath()) "PSADTIntune_$([guid]::NewGuid())"
+                            New-Item -ItemType Directory -Path $iconFolder -Force | Out-Null
+                        }
+                        Export-AppIcon -Path $itemFile -Destination $iconFolder -Name 'AppIcon' -Format 'png' | Out-Null
+                        $iconDone = $true
+                        $extracted = Join-Path $iconFolder 'AppIcon.png'
+                        if (Test-Path -LiteralPath $extracted -PathType Leaf) { $iconPath = $extracted }
+                    }
+                    catch {
+                        Write-Warning "Could not extract icon from '$($item.Property)': $_"
+                    }
                 }
-                catch {
-                    Write-Warning "Could not extract icon from '$($item.Property)': $_"
+                # Replace dynamic username with %username%
+                if ($Context -eq 'user') {
+                    $item.Path = $item.Path -replace '(?<=^[A-Z]:\\Users\\)[^\\]+', '%username%'
                 }
+                $DetectionParams = @{
+                    Path                 = $item.Path
+                    FileOrFolder         = $item.Property
+                    Check32BitOn64System = $false
+                }
+                if ($null -ne $item.VersionValue) {
+                    $DetectionParams['Version'] = $true
+                    $DetectionParams['Operator'] = 'Equal'
+                    $DetectionParams['VersionValue'] = $item.VersionValue
+                }
+                else {
+                    $DetectionParams['DetectionType'] = 'Exists'
+                    $DetectionParams['Existence'] = $true
+                }
+                $DetectionRule = New-IntuneWin32AppDetectionRuleFile @DetectionParams
             }
-            # Replace dynamic username with %username%
-            if ($Context -eq 'user') {
-                $item.Path = $item.Path -replace '(?<=^[A-Z]:\\Users\\)[^\\]+', '%username%'
-            }
-            $DetectionParams = @{
-                Path                 = $item.Path
-                FileOrFolder         = $item.Property
-                Check32BitOn64System = $false
-            }
-            if ($null -ne $item.VersionValue) {
-                $DetectionParams['Version'] = $true
-                $DetectionParams['Operator'] = 'Equal'
-                $DetectionParams['VersionValue'] = $item.VersionValue
-            }
-            else {
-                $DetectionParams['DetectionType'] = 'Exists'
-                $DetectionParams['Existence'] = $true
-            }
-            $DetectionRule = New-IntuneWin32AppDetectionRuleFile @DetectionParams
+            $DetectionRules.Add($DetectionRule) | Out-Null
         }
-        $DetectionRules.Add($DetectionRule) | Out-Null
+        $completed = $true
+    }
+    finally {
+        # Nothing extracted, or the run failed: do not leave the temp folder behind
+        if ($iconFolder -and (-not $iconPath -or -not $completed)) {
+            Remove-Item -LiteralPath $iconFolder -Recurse -Force -ErrorAction SilentlyContinue -WhatIf:$false -Confirm:$false
+        }
     }
 
-    return $DetectionRules
+    return [PSCustomObject]@{ DetectionRules = $DetectionRules; IconPath = $iconPath }
 }

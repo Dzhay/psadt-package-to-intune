@@ -24,13 +24,17 @@ Describe 'Publish-PSADTIntuneApp' {
         Mock New-IntuneWin32AppPackage -ModuleName PSADTIntune {
             New-Item -ItemType File -Path (Join-Path $OutputFolder 'Invoke-AppDeployToolkit.intunewin') -Force | Out-Null
         }
+        # Returns the rules plus the icon path; a test sets $script:ExtractedIcon to hand back an extracted icon
         Mock Select-AppDetectionRule -ModuleName PSADTIntune {
-            [ordered]@{
-                '@odata.type'          = '#microsoft.graph.win32LobAppFileSystemDetection'
-                'path'                 = 'C:\Program Files\Contoso'
-                'fileOrFolderName'     = 'Contoso.exe'
-                'check32BitOn64System' = $false
-                'detectionType'        = 'exists'
+            [PSCustomObject]@{
+                DetectionRules = @([ordered]@{
+                        '@odata.type'          = '#microsoft.graph.win32LobAppFileSystemDetection'
+                        'path'                 = 'C:\Program Files\Contoso'
+                        'fileOrFolderName'     = 'Contoso.exe'
+                        'check32BitOn64System' = $false
+                        'detectionType'        = 'exists'
+                    })
+                IconPath       = $script:ExtractedIcon
             }
         }
         Mock New-IntuneWin32AppIcon -ModuleName PSADTIntune { 'iVBORw0KGgo=' }
@@ -69,7 +73,8 @@ Describe 'Publish-PSADTIntuneApp' {
     }
 
     BeforeEach {
-        $root = Join-Path $TestDrive ([guid]::NewGuid())
+        $script:ExtractedIcon = $null
+        $root =Join-Path $TestDrive ([guid]::NewGuid())
         $env:APPDATA = Join-Path $root 'AppData'
         $package = New-TestPSADTPackage -Path $root
         $configPath = New-TestConfig -Path (Join-Path $root 'config.json') -Params @{ Owner = 'QA'; AADGroupId = $TestGroupId }
@@ -155,13 +160,77 @@ Describe 'Publish-PSADTIntuneApp' {
             Should -Invoke Add-IntuneWin32App -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $Icon -eq 'iVBORw0KGgo=' }
         }
 
-        It 'prefers the icon extracted from the selected executable' {
+        It 'prefers the icon extracted from the selected executable over the Assets icon' {
             New-TestPng -Path (Join-Path $package.PackageDirectory 'Assets\AppIcon.png') | Out-Null
-            $extractedIcon = New-TestPng -Path (Join-Path $package.AppDirectory 'AppIcon.png')
+            $tempFolder = Join-Path ([System.IO.Path]::GetTempPath()) "PSADTIntune_$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $tempFolder | Out-Null
+            $extractedIcon = New-TestPng -Path (Join-Path $tempFolder 'AppIcon.png')
+            $script:ExtractedIcon = $extractedIcon
 
             Publish-PSADTIntuneApp @common
 
             Should -Invoke New-IntuneWin32AppIcon -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $FilePath -eq $extractedIcon }
+        }
+
+        It 'prefers the package AppIcon.png over the extracted and Assets icons' {
+            New-TestPng -Path (Join-Path $package.PackageDirectory 'Assets\AppIcon.png') | Out-Null
+            $tempFolder = Join-Path ([System.IO.Path]::GetTempPath()) "PSADTIntune_$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $tempFolder | Out-Null
+            $script:ExtractedIcon = New-TestPng -Path (Join-Path $tempFolder 'AppIcon.png')
+            $packageIcon = New-TestPng -Path (Join-Path $package.PackageDirectory 'AppIcon.png')
+
+            Publish-PSADTIntuneApp @common
+
+            Should -Invoke New-IntuneWin32AppIcon -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $FilePath -eq $packageIcon }
+            Should -Invoke Write-Host -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { "$Object" -like '*"Icon": "*Contoso_Test_App_Package*AppIcon.png"*' }
+        }
+
+        It 'removes the extracted icon folder after the upload' {
+            $tempFolder = Join-Path ([System.IO.Path]::GetTempPath()) "PSADTIntune_$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $tempFolder | Out-Null
+            $script:ExtractedIcon = New-TestPng -Path (Join-Path $tempFolder 'AppIcon.png')
+
+            Publish-PSADTIntuneApp @common
+
+            $tempFolder | Should -Not -Exist
+        }
+
+        It 'removes the extracted icon folder on -WhatIf' {
+            $tempFolder = Join-Path ([System.IO.Path]::GetTempPath()) "PSADTIntune_$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $tempFolder | Out-Null
+            $script:ExtractedIcon = New-TestPng -Path (Join-Path $tempFolder 'AppIcon.png')
+
+            Publish-PSADTIntuneApp -WorkingDirectory $package.AppDirectory -ConfigPath $configPath -WhatIf
+
+            $tempFolder | Should -Not -Exist
+        }
+
+        It 'removes the extracted icon folder when the upload fails' {
+            $tempFolder = Join-Path ([System.IO.Path]::GetTempPath()) "PSADTIntune_$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $tempFolder | Out-Null
+            $script:ExtractedIcon = New-TestPng -Path (Join-Path $tempFolder 'AppIcon.png')
+            Mock Add-IntuneWin32App -ModuleName PSADTIntune -RemoveParameterType $orderedDictionaryParameters { throw 'upload failure' }
+
+            { Publish-PSADTIntuneApp @common } | Should -Throw '*upload failure*'
+
+            $tempFolder | Should -Not -Exist
+        }
+
+        It 'uses the PackageInfo.json description when present' {
+            @{ SchemaVersion = 1; Description = 'Store text for Contoso' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package.PackageDirectory 'PackageInfo.json')
+
+            Publish-PSADTIntuneApp @common
+
+            Should -Invoke Add-IntuneWin32App -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $Description -eq 'Store text for Contoso' }
+            Should -Invoke Write-Host -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { "$Object" -like '*"Description": "Store text for Contoso"*' }
+        }
+
+        It 'falls back to vendor, name and version when the PackageInfo.json description is empty' {
+            @{ SchemaVersion = 1; Description = '' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $package.PackageDirectory 'PackageInfo.json')
+
+            Publish-PSADTIntuneApp @common
+
+            Should -Invoke Add-IntuneWin32App -ModuleName PSADTIntune -Times 1 -Exactly -ParameterFilter { $Description -eq 'Contoso Test App 9.9.9' }
         }
 
         It '-WhatIf builds the package but does not connect or upload' {
@@ -220,6 +289,23 @@ Describe 'Publish-PSADTIntuneApp' {
                 $Notes -eq 'Contoso_Test_App_Package'
             }
             Get-ChildItem -LiteralPath $package.PackageDirectory -Filter '*.intunewin' | Should -BeNullOrEmpty
+        }
+
+        It 'keeps AppIcon.png and PackageInfo.json in the package folder when cleaning up' {
+            $icon = New-TestPng -Path (Join-Path $package.PackageDirectory 'AppIcon.png')
+            $info = Join-Path $package.PackageDirectory 'PackageInfo.json'
+            Set-Content -LiteralPath $info -Value '{ "SchemaVersion": 1 }'
+            Push-Location -LiteralPath $package.PackageDirectory
+            try {
+                Publish-PSADTIntuneApp -WorkingDirectory '.' -ConfigPath $configPath -Confirm:$false
+            }
+            finally {
+                Pop-Location
+            }
+
+            Get-ChildItem -LiteralPath $package.PackageDirectory -Filter '*.intunewin' | Should -BeNullOrEmpty
+            $icon | Should -Exist
+            $info | Should -Exist
         }
 
         It 'accepts a trailing backslash' {

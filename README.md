@@ -99,8 +99,12 @@ Contoso_Example_App/                  <- run here ...
 └── Contoso_Example_App_Package/      <- ... or here (PSADT v4 package)
     ├── Invoke-AppDeployToolkit.ps1
     ├── Invoke-AppDeployToolkit.exe
+    ├── AppIcon.png                   (optional, written by PSADT-Packager)
+    ├── PackageInfo.json              (optional, written by PSADT-Packager)
     └── Files/ ...
 ```
+
+`AppIcon.png` is the app icon (up to 256 px). `PackageInfo.json` carries the tested detection rule and the store description for the Company Portal. Both are optional and are never deleted by `packageIntune`.
 
 `AppName`, `AppVersion`, `AppVendor` and `RequireAdmin` are read from the `$adtSession` block in `Invoke-AppDeployToolkit.ps1`. `RequireAdmin` selects system or user install context.
 
@@ -126,9 +130,9 @@ packageIntune -WorkingDirectory 'C:\Packages\Contoso_Example_App'
 ```
 
 1. **Packaging**: creates `<PackageFolder>.intunewin`, or offers to reuse an existing one.
-2. **Detection rules**: a grid lists MSI product codes found under `Files\` and the targets of the 15 most recent Start Menu shortcuts **on this machine**, skipping shortcuts to files under `C:\Windows`. Install the app locally first (`packageIntune -i`). Select one or more. If you select nothing, a *PLACEHOLDER* rule is added, and you must fix it in Intune.
+2. **Detection rules**: a grid lists the candidates, each with a `Source` column. If `PackageInfo.json` has a `Detection` entry, it is the first row (`Packager (tested)`). It is valid even when the file does not exist on this machine, and later rows that duplicate it are dropped. Then come the MSI product codes found under `Files\` (`MSI`) and the targets of the 15 most recent Start Menu shortcuts **on this machine** (`Start Menu`), skipping shortcuts to files under `C:\Windows`. Install the app locally first (`packageIntune -i`) if you need those. Select one or more. If you select nothing, a *PLACEHOLDER* rule is added, and you must fix it in Intune.
 3. **Review & confirm**: all app parameters are shown before anything is uploaded.
-4. **Upload**: creates the Win32 app. The icon comes from the selected executable, or the PSADT `Assets\AppIcon.png` as a fallback.
+4. **Upload**: creates the Win32 app. The icon is, in this order: `AppIcon.png` in the package folder, the icon extracted from the first selected executable (a temporary file, removed afterwards), or the PSADT `Assets\AppIcon.png`. The description is the `Description` from `PackageInfo.json` when it is not empty, otherwise `<Vendor> <App> <Version>`.
 5. **Assignment**: if `AADGroupId` is set, the app is assigned to it as Available.
 
 ### Update an existing app

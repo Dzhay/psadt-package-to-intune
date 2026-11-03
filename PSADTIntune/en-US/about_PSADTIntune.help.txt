@@ -47,11 +47,17 @@ FOLDER LAYOUT
       +-- Contoso_Example_App_Package\        <- ... or here
           +-- Invoke-AppDeployToolkit.ps1
           +-- Invoke-AppDeployToolkit.exe
+          +-- AppIcon.png        (optional, written by PSADT-Packager)
+          +-- PackageInfo.json   (optional, written by PSADT-Packager)
           +-- Files\  Assets\  Config\  PSAppDeployToolkit\ ...
 
     The .intunewin is written to the folder you run in and named after the
     package folder. When you run inside the package folder itself, the
-    .intunewin and AppIcon.png are removed again after the upload.
+    .intunewin is removed again after the upload. AppIcon.png and
+    PackageInfo.json are never deleted.
+
+    AppIcon.png is the app icon. PackageInfo.json carries the tested
+    detection rule and the store description for the Company Portal.
 
     The script must define AppName and AppVersion (and ideally AppVendor and
     RequireAdmin) in its $adtSession block, e.g.:
@@ -118,7 +124,13 @@ MODES
         "PSADTIntune -i" and "packageIntune -i" are the same.
 
 DETECTION RULES
-    A grid (Out-ConsoleGridView) lists candidate rules; select one or more:
+    A grid (Out-ConsoleGridView) lists candidate rules, each with a Source
+    column; select one or more:
+      Packager (tested)
+            The Detection entry of PackageInfo.json, always the first row.
+            It is valid even when the file does not exist on this machine
+            (the app was tested by the packager). Later MSI and Start Menu
+            rows that duplicate it are dropped.
       MSI   Product codes of .msi files found under the package's Files\ folder.
       File  Targets of the 15 most recently changed Start Menu shortcuts on
             THIS machine (all-users Start Menu for RequireAdmin = $true,
@@ -128,8 +140,15 @@ DETECTION RULES
             otherwise an exists rule.
 
     Install the app locally before packaging (packageIntune -i) so its
-    shortcut shows up. The icon of the first selected file becomes the app
-    icon (otherwise the PSADT Assets\AppIcon.png is used). If you select
+    shortcut shows up.
+
+    App icon, first match wins: AppIcon.png in the package folder; the icon
+    of the first selected existing file (extracted to a temporary folder,
+    removed after the upload); the PSADT Assets\AppIcon.png.
+
+    Description: the Description in PackageInfo.json when it is not empty,
+    otherwise "<Vendor> <App> <Version>". Updates with -AppId do not touch
+    metadata. If you select
     nothing, a PLACEHOLDER rule is added - you must fix it in Intune before
     deploying.
 
